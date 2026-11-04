@@ -36,8 +36,10 @@ spofy/build.sh                       # -> spofy/dist/xray-linux-amd64 (флаг�
 spofy/docker/build-image.sh          # -> spofy/remnanode:3.4.4-x<ver>-spofy-<sha>
 spofy/test/run-e2e.sh <dir> reality SERVERS="xray-spofy"            # fingerprints edge/ios/qq/chrome/...
 spofy/test/run-e2e.sh <dir> hysteria BINS="stock spofy" SCEN="none|delay 25ms loss 1%"
-spofy/deploy/node.sh <ssh-host> plan  <tag>    # только чтение
-spofy/deploy/node.sh <ssh-host> apply <tag>    # пересоздаёт контейнер: сессии на ноде рвутся на несколько секунд
+spofy/deploy/node.sh <ssh-host> plan           # только чтение
+spofy/deploy/node.sh <ssh-host> preflight      # только чтение: живой конфиг ноды через новое ядро
+spofy/deploy/node.sh <ssh-host> apply          # preflight, затем пересоздаёт контейнер: сессии рвутся на секунды
+                                               # (тег по умолчанию — самый свежий локальный spofy/remnanode)
 spofy/deploy/node.sh <ssh-host> rollback       # возврат к точному дайджесту прежнего образа
 ```
 
