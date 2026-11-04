@@ -68,3 +68,7 @@ tool (
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc
 	google.golang.org/protobuf/cmd/protoc-gen-go
 )
+
+// Spofy: in-tree REALITY (upstream github.com/xtls/reality v0.0.0-20261014101318-83f621788ca8) with
+// fork patches listed in third_party/reality/SPOFY.md.
+replace github.com/xtls/reality => ./third_party/reality
