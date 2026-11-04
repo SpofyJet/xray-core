@@ -148,10 +148,61 @@ func SniffTLS(b []byte) (*SniffHeader, error) {
 		return nil, common.ErrNoClue
 	}
 
+	hello := b[5 : 5+headerLen]
+	if length, ok := handshakeMessageLength(hello); !ok || length > len(hello) {
+		// Spofy (from Jolymmiles/Xray-core d3fcd37b): the ClientHello continues in later handshake records
+		// (RFC 8446 5.1; Xray's fragment mask and some DPI-evasion clients do this). Without reassembly the
+		// hello yields no domain and domain-based routing/blocking rules are skipped for the connection.
+		var err error
+		if hello, err = reassembleClientHello(b); err != nil {
+			return nil, err
+		}
+	}
 	h := &SniffHeader{}
-	err := ReadClientHello(b[5:5+headerLen], h)
+	err := ReadClientHello(hello, h)
 	if err == nil {
 		return h, nil
 	}
 	return nil, err
+}
+
+// maxClientHelloLength bounds the ClientHello reassembled from records. The dispatcher caches less than this.
+const maxClientHelloLength = 32 * 1024
+
+// handshakeMessageLength returns the length, header included, of the handshake message at the start of b,
+// once its 4-byte header is there.
+func handshakeMessageLength(b []byte) (int, bool) {
+	if len(b) < 4 {
+		return 0, false
+	}
+	return 4 + (int(b[1])<<16 | int(b[2])<<8 | int(b[3])), true
+}
+
+// reassembleClientHello returns the ClientHello carried by the handshake records at the start of b when it
+// does not fit the first one.
+func reassembleClientHello(b []byte) ([]byte, error) {
+	var message []byte
+	for {
+		if len(b) < 5 {
+			return nil, protocol.ErrProtoNeedMoreData
+		}
+		if b[0] != 0x16 /* TLS Handshake */ || !IsValidTLSVersion(b[1], b[2]) {
+			// Another record interrupted the ClientHello.
+			return nil, errNotClientHello
+		}
+		recordLen := int(binary.BigEndian.Uint16(b[3:5]))
+		if 5+recordLen > len(b) {
+			return nil, protocol.ErrProtoNeedMoreData
+		}
+		message = append(message, b[5:5+recordLen]...)
+		b = b[5+recordLen:]
+		if length, ok := handshakeMessageLength(message); ok {
+			if message[0] != 0x01 /* client_hello */ || length > maxClientHelloLength {
+				return nil, errNotClientHello
+			}
+			if len(message) >= length {
+				return message[:length], nil
+			}
+		}
+	}
 }
