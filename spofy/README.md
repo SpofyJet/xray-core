@@ -43,6 +43,9 @@ spofy/deploy/node.sh <ssh-host> apply          # preflight, затем пере�
 spofy/deploy/node.sh <ssh-host> rollback       # возврат к точному дайджесту прежнего образа
 # <ssh-host> — имя из ~/.ssh/config или просто IP (тогда root@IP, ключ ~/.ssh/node_audit).
 # Новая нода: на ней добавить ключ бот-сервера в /root/.ssh/authorized_keys, потом: spofy/deploy/node.sh <IP> apply
+# Прямо на ноде, без бот-сервера (качает ядро из GitHub Release, проверяет sha256 и живой конфиг):
+#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/SpofyJet/xray-core/refs/heads/spofy/main/spofy/install.sh)"
+#   … _ plan | check | rollback
 ```
 
 `<dir>` для e2e — каталог с бинарниками `xray-<label>`; для `reality` нужен ещё `xray-client` (старое ядро
