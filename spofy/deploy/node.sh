@@ -70,7 +70,9 @@ apply)
   R "set -e; cd '$D'; cp -a docker-compose.yml docker-compose.yml.bak-spofy-$TS
      [ -f .spofy-prev-image ] || echo '$PREV' > .spofy-prev-image
      echo 'docker-compose.yml.bak-spofy-$TS' > .spofy-last-backup
-     sed -i -E 's#^(\s*image:\s*).*#\1$TAG#' docker-compose.yml; grep -nE '^\s*image:' docker-compose.yml
+     n=\$(grep -cE '^\s*image:\s*(remnawave/node|spofy/remnanode)[:@]' docker-compose.yml || true)
+     [ \"\$n\" = 1 ] || { echo \"ABORT: expected exactly one remnanode image line in docker-compose.yml, found \$n\"; exit 4; }
+     sed -i -E 's#^(\s*image:\s*)(remnawave/node|spofy/remnanode)[:@][^[:space:]]*#\1$TAG#' docker-compose.yml; grep -nE '^\s*image:' docker-compose.yml
      docker compose up -d --no-deps $CONTAINER"
   echo "== waiting for XRay Core"; for i in $(seq 1 30); do
     if R "docker logs --since 2m $CONTAINER 2>&1 | grep -aq 'is up and running'"; then break; fi; sleep 2; done
@@ -84,7 +86,7 @@ rollback)
      cp -a docker-compose.yml docker-compose.yml.spofy-rolledback-\$(date -u +%Y%m%d-%H%M%S)
      cp -a \"\$B\" docker-compose.yml
      # pin the exact previous image (the backup may say :latest, which can point to a newer release now)
-     sed -i -E \"s#^(\\s*image:\\s*).*#\\1\$P#\" docker-compose.yml; grep -nE '^\\s*image:' docker-compose.yml
+     sed -i -E \"s#^(\\s*image:\\s*)(remnawave/node|spofy/remnanode)[:@][^[:space:]]*#\\1\$P#\" docker-compose.yml; grep -nE '^\\s*image:' docker-compose.yml
      docker compose up -d --no-deps $CONTAINER"
   sleep 8; remote_state
   ;;
