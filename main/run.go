@@ -92,21 +92,58 @@ func executeRun(cmd *base.Command, args []string) {
 		os.Exit(0)
 	}
 
+	// Spofy (from Jolymmiles/Xray-core 729bce29 + 9117a0c1, port of upstream PR #6164): subscribe to shutdown
+	// signals before Start, and bound the wait for Close so a hung feature cannot keep a half-dead Xray alive
+	// until SIGKILL when rw-node restarts the core.
+	osSignals := make(chan os.Signal, 1)
+	signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(osSignals)
+
 	if err := server.Start(); err != nil {
 		fmt.Println("Failed to start:", err)
 		os.Exit(-1)
 	}
-	defer server.Close()
 
 	// Explicitly triggering GC to remove garbage from config loading.
 	runtime.GC()
 	debug.FreeOSMemory()
 
-	{
-		osSignals := make(chan os.Signal, 1)
-		signal.Notify(osSignals, os.Interrupt, syscall.SIGTERM)
-		<-osSignals
+	<-osSignals
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- server.Close()
+	}()
+
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			exitWithMessage("Failed to close:", err)
+		}
+	case <-time.After(closeTimeout):
+		exitWithMessage("Timed out while closing Xray.")
 	}
+}
+
+// closeTimeout bounds the wait for Close after a shutdown signal.
+const closeTimeout = 10 * time.Second
+
+// exitMessageTimeout bounds the wait for the shutdown failure message.
+const exitMessageTimeout = time.Second
+
+// exitWithMessage prints message and exits 1. The exit waits for the print at most exitMessageTimeout:
+// a stdout nobody reads must not keep the process alive past its shutdown bound.
+func exitWithMessage(message ...interface{}) {
+	printed := make(chan struct{})
+	go func() {
+		fmt.Println(message...)
+		close(printed)
+	}()
+	select {
+	case <-printed:
+	case <-time.After(exitMessageTimeout):
+	}
+	os.Exit(1)
 }
 
 func dumpConfig() int {
