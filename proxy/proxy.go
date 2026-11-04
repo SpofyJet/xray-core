@@ -268,7 +268,10 @@ func (w *VisionReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
 			if rawInputBuffer, err := buf.ReadFrom(raw); err == nil && !rawInputBuffer.IsEmpty() {
 				buffer, _ = buf.MergeMulti(buffer, rawInputBuffer)
 			}
-			// *raw = bytes.Buffer{} // may not be suitable for Go 1.27.3+
+			// Spofy (from Jolymmiles/Xray-core 25a4a24e): release the ~17 KiB record buffer; nothing reads the
+			// connection after the direct-copy switch. REALITY (third_party/reality/conn.go) returns rawInput to
+			// rawInputPool only inside a read and drops its pointer at the same time, so this buffer is in no pool.
+			*raw = bytes.Buffer{}
 		}
 		w.rawInput = nil
 
