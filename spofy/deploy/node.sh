@@ -1,7 +1,7 @@
 #!/bin/bash
 # Deploy / roll back the Spofy remnanode image on one node over SSH.
 #
-#   spofy/deploy/node.sh <ssh-host> plan     [<image-tag>]   # read-only: what would change
+#   spofy/deploy/node.sh <ssh-host|IP> plan     [<image-tag>]   # read-only: what would change
 #   spofy/deploy/node.sh <ssh-host> apply    [<image-tag>]   # ship image, test live config, pin compose, recreate
 #   spofy/deploy/node.sh <ssh-host> preflight [<image-tag>]  # read-only: run the node's live config through the new core
 #   spofy/deploy/node.sh <ssh-host> check                    # versions, listeners, last rw-node lines
@@ -13,7 +13,11 @@
 set -euo pipefail
 HOST=${1:?ssh host}; ACTION=${2:?plan|apply|check|rollback}; TAG=${3:-}
 CONTAINER=${CONTAINER:-remnanode}
-R() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" "$@"; }
+# <ssh-host> is an ~/.ssh/config alias or a bare IP (then root@IP with ~/.ssh/node_audit, new host keys accepted).
+case "$HOST" in *@*|*[!0-9.]*) ;; *) HOST=root@$HOST;; esac
+SSH_KEY=${SSH_KEY:-$HOME/.ssh/node_audit}
+SSHO=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new); [ -f "$SSH_KEY" ] && SSHO+=(-i "$SSH_KEY")
+R() { ssh "${SSHO[@]}" "$HOST" "$@"; }
 if [ -z "$TAG" ] && [ "$ACTION" != rollback ] && [ "$ACTION" != check ]; then
   TAG=$(docker images spofy/remnanode --format '{{.Repository}}:{{.Tag}}' | head -1)
   [ -n "$TAG" ] || { echo "no local spofy/remnanode image: run spofy/build.sh && spofy/docker/build-image.sh"; exit 1; }

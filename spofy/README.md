@@ -41,6 +41,8 @@ spofy/deploy/node.sh <ssh-host> preflight      # только чтение: жи
 spofy/deploy/node.sh <ssh-host> apply          # preflight, затем пересоздаёт контейнер: сессии рвутся на секунды
                                                # (тег по умолчанию — самый свежий локальный spofy/remnanode)
 spofy/deploy/node.sh <ssh-host> rollback       # возврат к точному дайджесту прежнего образа
+# <ssh-host> — имя из ~/.ssh/config или просто IP (тогда root@IP, ключ ~/.ssh/node_audit).
+# Новая нода: на ней добавить ключ бот-сервера в /root/.ssh/authorized_keys, потом: spofy/deploy/node.sh <IP> apply
 ```
 
 `<dir>` для e2e — каталог с бинарниками `xray-<label>`; для `reality` нужен ещё `xray-client` (старое ядро
