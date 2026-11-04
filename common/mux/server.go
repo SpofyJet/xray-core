@@ -32,6 +32,14 @@ func NewServer(ctx context.Context) *Server {
 	return s
 }
 
+// isMuxCoolDestination reports whether dest opens a Mux.Cool carrier. Clients always carry Mux.Cool over
+// TCP (RequestHeader.Destination maps the mux command to TCP); a UDP packet addressed to v1.mux.cool, e.g.
+// over a Hysteria UDP session, must not start a stream worker whose handlers outlive the packet session.
+// Spofy, from Jolymmiles/Xray-core 8e56c2e0.
+func isMuxCoolDestination(dest net.Destination) bool {
+	return dest.Network == net.Network_TCP && dest.Address == muxCoolAddress
+}
+
 // Type implements common.HasType.
 func (s *Server) Type() interface{} {
 	return s.dispatcher.Type()
@@ -39,7 +47,7 @@ func (s *Server) Type() interface{} {
 
 // Dispatch implements routing.Dispatcher
 func (s *Server) Dispatch(ctx context.Context, dest net.Destination) (*transport.Link, error) {
-	if dest.Address != muxCoolAddress {
+	if !isMuxCoolDestination(dest) {
 		return s.dispatcher.Dispatch(ctx, dest)
 	}
 
@@ -60,7 +68,7 @@ func (s *Server) Dispatch(ctx context.Context, dest net.Destination) (*transport
 
 // DispatchLink implements routing.Dispatcher
 func (s *Server) DispatchLink(ctx context.Context, dest net.Destination, link *transport.Link) error {
-	if dest.Address != muxCoolAddress {
+	if !isMuxCoolDestination(dest) {
 		return s.dispatcher.DispatchLink(ctx, dest, link)
 	}
 	worker, err := NewServerWorker(ctx, s.dispatcher, link)
