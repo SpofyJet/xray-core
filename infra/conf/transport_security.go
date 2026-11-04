@@ -42,6 +42,9 @@ type REALITYConfig struct {
 	LimitFallbackUpload   LimitFallback `json:"limitFallbackUpload"`
 	LimitFallbackDownload LimitFallback `json:"limitFallbackDownload"`
 
+	// Spofy: server-side; true restores upstream's rejection of Client Hellos without X25519MLKEM768.
+	RequireMlkem bool `json:"requireMlkem"`
+
 	Fingerprint   string `json:"fingerprint"`
 	ServerName    string `json:"serverName"`
 	Password      string `json:"password"`
@@ -55,6 +58,7 @@ func (c *REALITYConfig) Build() (proto.Message, error) {
 	config := new(reality.Config)
 	config.MasterKeyLog = c.MasterKeyLog
 	config.Show = c.Show
+	config.RequireMlkem = c.RequireMlkem
 	var err error
 	if c.Target != nil {
 		c.Dest = c.Target

@@ -31,6 +31,9 @@ message Config {
   repeated int64 spider_y = 27;
 
   string master_key_log = 31;
+
+  // Spofy (same number as Jolymmiles/Xray-core): outside upstream's ranges.
+  bool require_mlkem = 100;
 }
 
 message LimitFallback {

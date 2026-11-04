@@ -604,6 +604,10 @@ type Config struct {
 
 	LimitFallbackUpload   LimitFallback
 	LimitFallbackDownload LimitFallback
+
+	// [REALITY] SPOFY: RequireMlkem restores upstream's rejection of Client Hellos without an
+	// X25519MLKEM768 key share. False (default) also accepts legacy hellos, see SPOFY.md.
+	RequireMlkem bool
 	// [REALITY] SECTION END
 
 	// Rand provides the source of entropy for the connection.

@@ -28,6 +28,8 @@ func (c *Config) GetREALITYConfig() *reality.Config {
 		MaxClientVer: c.MaxClientVer,
 		MaxTimeDiff:  time.Duration(c.MaxTimeDiff) * time.Millisecond,
 
+		RequireMlkem: c.RequireMlkem, // Spofy, see third_party/reality/SPOFY.md
+
 		NextProtos:             nil, // should be nil
 		SessionTicketsDisabled: true,
 

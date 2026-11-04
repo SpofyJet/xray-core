@@ -232,7 +232,14 @@ func Server(ctx context.Context, conn net.Conn, config *Config) (*Conn, error) {
 				}
 			}
 			if peerPub2 == nil {
-				break // reject outdated/strange Client Hello that doesn't have X25519MLKEM768 before optional X25519
+				// [REALITY] SPOFY SECTION: requireMlkem (see SPOFY.md)
+				// Upstream rejects every hello without X25519MLKEM768 before X25519. Unless RequireMlkem is set,
+				// accept a legacy hello (no hybrid group offered at all, exactly one X25519 share) through its
+				// X25519 share, as before upstream 8cdf7bf9. Hellos that offer the hybrid group keep upstream rules.
+				if config.RequireMlkem || !isLegacyX25519Hello(hs.clientHello) {
+					break // reject outdated/strange Client Hello that doesn't have X25519MLKEM768 before optional X25519
+				}
+				// [REALITY] SPOFY SECTION END
 			}
 			if peerPub == nil {
 				peerPub = peerPub2 // secondary choice: X25519 in X25519MLKEM768
