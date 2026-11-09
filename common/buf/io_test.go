@@ -55,8 +55,8 @@ func TestTimeoutWrapperReaderTimeoutPreservesPendingRead(t *testing.T) {
 	reader := &TimeoutWrapperReader{Reader: &controlledReader{result: results}}
 
 	got, err := reader.ReadMultiBufferTimeout(time.Millisecond)
-	if err != nil {
-		t.Fatal(err)
+	if err != ErrReadTimeout {
+		t.Fatalf("timed-out read error = %v, want ErrReadTimeout", err)
 	}
 	if !got.IsEmpty() {
 		t.Fatalf("timed-out read returned %q, want no payload", got.String())
