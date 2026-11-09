@@ -1,7 +1,7 @@
 # Spofy changes to REALITY
 
-Base: `github.com/xtls/reality` `v0.0.0-20261014101318-83f621788ca8` (the version pinned by Xray-core v26.10.31),
-copied unmodified in the commit that introduced this directory. Every later change is a separate commit
+Base: `github.com/xtls/reality` `v0.0.0-20261108101329-4bb46b2afd8b` (the version pinned by Xray-core v26.11.9),
+first copied at 83f621788ca8 (v26.10.31) and updated by applying the upstream diff. Every later change is a separate commit
 touching only this directory plus its Xray-side wiring.
 
 ## Updating to a newer upstream REALITY
