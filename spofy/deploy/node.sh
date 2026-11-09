@@ -72,7 +72,8 @@ apply)
   echo "== preflight: live config through the new core"
   preflight || { echo "ABORT: the node's current config fails on $TAG; nothing was changed on the node"; exit 1; }
   R "set -e; cd '$D'; cp -a docker-compose.yml docker-compose.yml.bak-spofy-$TS
-     [ -f .spofy-prev-image ] || echo '$PREV' > .spofy-prev-image
+     # rollback must return to the image running before THIS apply; a re-apply of the same tag keeps the record
+     [ \"\$(docker inspect $CONTAINER --format '{{.Config.Image}}')\" = '$TAG' ] || echo '$PREV' > .spofy-prev-image
      echo 'docker-compose.yml.bak-spofy-$TS' > .spofy-last-backup
      n=\$(grep -cE '^\s*image:\s*(remnawave/node|spofy/remnanode)[:@]' docker-compose.yml || true)
      [ \"\$n\" = 1 ] || { echo \"ABORT: expected exactly one remnanode image line in docker-compose.yml, found \$n\"; exit 4; }
