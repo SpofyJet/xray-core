@@ -16,7 +16,7 @@
 set -euo pipefail
 ACTION=${1:-apply}; C=${CONTAINER:-remnanode}
 REPO=SpofyJet/xray-core; REL=${SPOFY_RELEASE:-latest}
-BASE=remnawave/node:3.4.4@sha256:19ca38195f699f59c0e5978489a18173234aca4b1bd29bab495b16e9d6423f70
+BASE=remnawave/node:3.4.5@sha256:8f5a41708dfa86acc2561a520c9b40e2ff30812a16c28cf6bba6c365ca0f7d65
 die() { echo "ABORT: $*" >&2; exit 1; }
 say() { echo "== $*"; }
 
@@ -79,7 +79,7 @@ prepare() {
   REV=$(echo "$VER" | grep -o 'spofy-[0-9a-f]*' || true); XV=$(echo "$VER" | awk '{print $2}')
   [ -n "$REV" ] || die "downloaded binary is not a Spofy build: $VER"
   echo "$VER"
-  TAG=spofy/remnanode:3.4.4-x$XV-$REV
+  TAG=spofy/remnanode:3.4.5-x$XV-$REV
   if docker image inspect "$TAG" >/dev/null 2>&1; then say "image $TAG already present"
   else
     say "building $TAG (base $BASE)"
@@ -87,7 +87,7 @@ prepare() {
 FROM $BASE
 COPY xray /usr/local/bin/xray
 RUN chmod 0755 /usr/local/bin/xray && /usr/local/bin/xray version | sed -n 1p | grep -q "$REV" && ls -l /usr/local/bin/rw-core
-LABEL org.opencontainers.image.title="spofy-remnanode" org.opencontainers.image.base.name="remnawave/node:3.4.4" org.opencontainers.image.revision="$REV"
+LABEL org.opencontainers.image.title="spofy-remnanode" org.opencontainers.image.base.name="remnawave/node:3.4.5" org.opencontainers.image.revision="$REV"
 EOF
     docker build -q -t "$TAG" "$W" >/dev/null || die "image build failed"
   fi
