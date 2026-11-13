@@ -142,6 +142,39 @@ func (h *httpHandler) StreamDispatcher(ft http3.FrameType, stream *quic.Stream, 
 	}
 }
 
+// New connections admitted per second without address validation, and the burst allowed on top
+// (a busy node sees under 10 new Hysteria connections per second; a restart reconnects a few hundred).
+const (
+	retryGateRate  = 50
+	retryGateBurst = 200
+)
+
+// retryGate is a token bucket for quic.Transport.VerifySourceAddress: while tokens last a new
+// connection is accepted as before, after that the client must pass QUIC Retry first.
+type retryGate struct {
+	mu     sync.Mutex
+	rate   float64
+	burst  float64
+	tokens float64
+	last   time.Time
+}
+
+func (g *retryGate) verify(net.Addr) bool { return g.verifyAt(time.Now()) }
+
+func (g *retryGate) verifyAt(now time.Time) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if d := now.Sub(g.last).Seconds(); d > 0 {
+		g.tokens = min(g.burst, g.tokens+d*g.rate)
+		g.last = now
+	}
+	if g.tokens >= 1 {
+		g.tokens--
+		return false
+	}
+	return true
+}
+
 type Listener struct {
 	validator   *account.Validator
 	config      *Config
@@ -334,7 +367,11 @@ func Listen(ctx context.Context, address net.Address, port net.Port, streamSetti
 		common.Must2(rand.Read((*k)[:]))
 	}
 
-	tr := &quic.Transport{Conn: pktConn, DisableGSO: quicParams.DisableGSO, StatelessResetKey: k}
+	// Without source address validation every Initial from a spoofed address allocates a full connection
+	// (about 24 KB each, 2.7 GB after 120k packets in the lab). Past a small burst the listener answers
+	// with a stateless Retry instead; real clients repeat the Initial with the token, one extra round trip.
+	gate := &retryGate{rate: retryGateRate, burst: retryGateBurst, tokens: retryGateBurst, last: time.Now()}
+	tr := &quic.Transport{Conn: pktConn, DisableGSO: quicParams.DisableGSO, StatelessResetKey: k, VerifySourceAddress: gate.verify}
 
 	listener, err := tr.Listen(tlsConfig.GetTLSConfig(tls.WithNextProto("h3")), quicConfig)
 	if err != nil {
