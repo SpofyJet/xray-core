@@ -109,15 +109,21 @@ func setupOcspTicker(entry *Certificate, callback func(isReloaded, isOcspstaplin
 		for {
 			var isReloaded bool
 			if entry.CertificatePath != "" && entry.KeyPath != "" {
+				// Spofy: a failed read (file being replaced, mount not ready) must not end hot
+				// reload for the lifetime of the process - keep the current pair and try again
+				// on the next tick. Upstream returned here, so a renewed certificate was never
+				// picked up afterwards (XTLS/Xray-core PR #7376, closed unmerged).
 				newCert, err := filesystem.ReadCert(entry.CertificatePath)
 				if err != nil {
-					errors.LogErrorInner(context.Background(), err, "failed to parse certificate")
-					return
+					errors.LogErrorInner(context.Background(), err, "failed to read certificate, will retry")
+					<-t.C
+					continue
 				}
 				newKey, err := filesystem.ReadCert(entry.KeyPath)
 				if err != nil {
-					errors.LogErrorInner(context.Background(), err, "failed to parse key")
-					return
+					errors.LogErrorInner(context.Background(), err, "failed to read key, will retry")
+					<-t.C
+					continue
 				}
 				if string(newCert) != string(entry.Certificate) || string(newKey) != string(entry.Key) {
 					entry.Certificate = newCert
