@@ -27,6 +27,12 @@ func ConnectionRemoteAddr(a net.Addr) ConnectionOption {
 func ConnectionInput(writer io.Writer) ConnectionOption {
 	return func(c *Connection) {
 		c.writer = buf.NewWriter(writer)
+		// Spofy: a plain io.Writer is driven one buffer at a time (buf.SequentialWriter) and
+		// must not keep the bytes after Write returns, so Connection.Write can pass the
+		// caller's bytes to it as they are instead of copying them into pooled buffers first.
+		if _, ok := c.writer.(*buf.SequentialWriter); ok {
+			c.direct = writer
+		}
 	}
 }
 
@@ -86,6 +92,7 @@ func NewConnection(opts ...ConnectionOption) net.Conn {
 type Connection struct {
 	reader  *buf.BufferedReader
 	writer  buf.Writer
+	direct  io.Writer // set by ConnectionInput when writer is a buf.SequentialWriter around it
 	done    *done.Instance
 	onClose io.Closer
 	local   net.Addr
@@ -105,6 +112,25 @@ func (c *Connection) ReadMultiBuffer() (buf.MultiBuffer, error) {
 func (c *Connection) Write(b []byte) (int, error) {
 	if c.done.Done() {
 		return 0, io.ErrClosedPipe
+	}
+
+	if c.direct != nil {
+		// Same chunks as buf.MergeBytes + buf.SequentialWriter produce (one Write per
+		// buf.Size bytes), without the copy. With inbound stats enabled every payload buffer
+		// of a gRPC stream comes through here (stat.CounterConnection.Write).
+		written := 0
+		for len(b) > 0 {
+			n := len(b)
+			if n > buf.Size {
+				n = buf.Size
+			}
+			if _, err := c.direct.Write(b[:n]); err != nil {
+				return written, err
+			}
+			written += n
+			b = b[n:]
+		}
+		return written, nil
 	}
 
 	l := len(b)
