@@ -10,7 +10,7 @@
 
 | Коммит | Что | Зачем |
 |---|---|---|
-| Hysteria: bump apernet/quic-go to v0.63.1 | quic-go как в Hysteria 2.13 | приоритет повторных отправок, проверки CRYPTO, меньше памяти |
+| Hysteria: apernet/quic-go v0.65.1 (27974fd7, 78577799) | quic-go из master Hysteria (2895f039); до 10.11 был v0.63.1 | приоритет повторных отправок, проверки CRYPTO, меньше памяти |
 | REALITY: in-tree copy + legacy ClientHello | `third_party/reality`, опция `requireMlkem` (по умолчанию `false`) | с 26.9.9 официальный REALITY не пускает fingerprint `edge`, `ios`, `qq` |
 | Shadowsocks UDP buffer (Jolymmiles c766e4a2) | буфер под размер пакета | UDP-ответ больше ~8 КБ ронял **весь процесс** Xray |
 | buf: timer instead of sleeper goroutine (0edd0d60) | `time.Timer` | минус горутина на каждое ожидание при сниффинге |
@@ -18,6 +18,9 @@
 | Mux.Cool: TCP carriers only (8e56c2e0) | UDP на v1.mux.cool не запускает worker | возможная утечка при UDP через Hysteria/VLESS |
 | xray run: bounded shutdown (729bce29+9117a0c1) | после SIGTERM ждём Close не дольше 10 с | зависший Close не держит полумёртвый Xray при перезапуске rw-node |
 | TLS sniffer: fragmented ClientHello (d3fcd37b) | сборка ClientHello из нескольких записей | без этого такой hello обходит доменные блокировки |
+| cnc: no payload copy on Connection.Write (0f2c5234) | gRPC с включённой статистикой инбаунда писал каждый буфер через `buf.MergeBytes` (лишняя копия) | −6 % CPU ядра на Trojan-gRPC (стенд 13.11: 0,530 → 0,497 мс CPU/МБ) |
+| signal: ActivityTimer.SetTimeout (98682130) | первый синхронный запуск проверки только снимает метку (порт upstream PR #7270, закрыт без слияния) | SetTimeout мог заблокировать сам себя: обработчик соединения зависал навсегда (воспроизводится тестом) |
+| tls: hot reload после ошибки чтения (78e9aafe) | при ошибке чтения файла сертификата или ключа — повтор на следующем тике (то же, что upstream PR #7376, закрыт без слияния) | после одной ошибки чтения перечитывание выключалось до перезапуска: продлённый сертификат не подхватывался (ноды с `certificateFile`: Hysteria) |
 
 ### REALITY `requireMlkem`
 
