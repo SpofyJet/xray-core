@@ -32,8 +32,10 @@ Two test fixtures are not in git because of the repository `.gitignore` (`*.key`
   set when it was rebased from quic-go 0.63 to 0.65; not an upstream quic-go bug). With `DisablePathManager`
   (Xray sets it on both sides) 0.63.1 called `sendConn.ChangeRemoteAddr` only on a server and only for a
   packet from a new address. In 2895f039 the call moved in front of that check and runs for every received
-  1-RTT packet, on clients too: two allocations per received packet, the send path loses the spare room for
-  the UDP_SEGMENT control message (one more allocation per send), a server builds path-validation state it
-  never uses, and a client starts sending from whatever local address the last packet arrived on.
+  1-RTT packet, on clients too: four allocations (148 bytes, measured with IPv4 packet info; the commit
+  message says two) per received packet, the send path loses the spare room for the UDP_SEGMENT control
+  message (one more allocation per send), a server builds path-validation state it never uses, and a client
+  starts sending from whatever local address the last packet arrived on.
   `connection.go` again changes the address only for a server and only when it differs. Test:
-  `TestConnectionDisablePathManagerRemoteAddr` (`connection_spofy_test.go`).
+  `TestConnectionDisablePathManagerRemoteAddr` (`connection_spofy_test.go`). Allocations in a download over
+  localhost sockets, both sides in one process: 5754 -> 4844 per 1 MB, 10205 -> 9004 per 100 requests of 2 KB.
