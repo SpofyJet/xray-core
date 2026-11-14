@@ -39,6 +39,16 @@ preflight() {
      grep -vE '^Xray |^A unified|Reading config' \$t/out | tail -3; exit \$rc"
 }
 
+# Ship the image unless the node already holds exactly this build (same image id): `preflight` followed by
+# `apply` sends the 500 MB once, and an interrupted transfer is simply repeated.
+ship() {
+  local lid rid
+  lid=$(docker image inspect "$TAG" --format '{{.Id}}')
+  rid=$(R "docker image inspect '$TAG' --format '{{.Id}}' 2>/dev/null" || true)
+  if [ -n "$lid" ] && [ "$lid" = "$rid" ]; then echo "== image already on the node: $TAG"; return 0; fi
+  echo "== shipping $TAG"; docker save "$TAG" | gzip -1 | R "gunzip | docker load -q"
+}
+
 compose_dir() { R "docker inspect $CONTAINER --format '{{ index .Config.Labels \"com.docker.compose.project.working_dir\" }}'"; }
 remote_state() {
   R "set -e; c=$CONTAINER
@@ -52,7 +62,7 @@ remote_state() {
 
 case "$ACTION" in
 preflight)
-  R "docker image inspect '$TAG' >/dev/null 2>&1" || { echo "== shipping $TAG"; docker save "$TAG" | gzip -1 | R "gunzip | docker load -q"; }
+  ship
   preflight
   ;;
 plan|check)
@@ -68,7 +78,7 @@ apply)
   echo "== state before"; remote_state | tee /dev/stderr | grep -E '^image_digest=' | cut -d= -f2- > /tmp/.spofy-prev.$$ || true
   PREV=$(cat /tmp/.spofy-prev.$$); rm -f /tmp/.spofy-prev.$$
   [ -n "$PREV" ] || { echo "cannot resolve current image digest; refusing (rollback would be impossible)"; exit 1; }
-  echo "== shipping $TAG"; docker save "$TAG" | gzip -1 | R "gunzip | docker load -q"
+  ship
   echo "== preflight: live config through the new core"
   preflight || { echo "ABORT: the node's current config fails on $TAG; nothing was changed on the node"; exit 1; }
   R "set -e; cd '$D'; cp -a docker-compose.yml docker-compose.yml.bak-spofy-$TS
