@@ -17,3 +17,13 @@ Two test fixtures are not in git because of the repository `.gitignore` (`*.key`
    repository root, then `spofy/test/run-e2e.sh <dir> hysteria`.
 
 ## Patches
+
+- **Send stream leak when a stream is reset during a blocked Write** (port of quic-go/quic-go 254a5393,
+  PR #6157; the bug is also in apernet/quic-go 0.63.1). A `Write` of up to one packet of data (1452 bytes)
+  that was waiting behind an already queued frame returned success when the peer sent STOP_SENDING or the
+  application called `CancelWrite`, and left its data queued on the reset stream. Such a stream never
+  completed: its memory stayed until the connection closed and, for a stream opened by the peer, the stream
+  credit was never returned. After `MaxIncomingStreams` (1024 in the Hysteria listener) such resets the
+  client cannot open new streams on that connection. Tests: `TestSendStreamResetDuringBlockedSmallWrite`,
+  `TestSpofyStreamCreditSurvivesResetDuringBlockedWrite` (`send_stream_spofy_test.go`), and upstream's
+  changes to `TestSendStreamCancellation` / `TestSendStreamStopSendingDuringWrite`.
