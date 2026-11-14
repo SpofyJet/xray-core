@@ -72,3 +72,7 @@ tool (
 // Spofy: in-tree REALITY (upstream github.com/xtls/reality v0.0.0-20261108101329-4bb46b2afd8b) with
 // fork patches listed in third_party/reality/SPOFY.md.
 replace github.com/xtls/reality => ./third_party/reality
+
+// Spofy: in-tree quic-go (upstream github.com/apernet/quic-go v0.65.1-0.20261109005002-2895f039137a) with
+// fork patches listed in third_party/quic-go/SPOFY.md.
+replace github.com/apernet/quic-go => ./third_party/quic-go
