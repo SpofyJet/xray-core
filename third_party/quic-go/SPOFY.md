@@ -27,3 +27,13 @@ Two test fixtures are not in git because of the repository `.gitignore` (`*.key`
   client cannot open new streams on that connection. Tests: `TestSendStreamResetDuringBlockedSmallWrite`,
   `TestSpofyStreamCreditSurvivesResetDuringBlockedWrite` (`send_stream_spofy_test.go`), and upstream's
   changes to `TestSendStreamCancellation` / `TestSendStreamStopSendingDuringWrite`.
+
+- **DisablePathManager: replace the remote address only when it changed** (regression of the Hysteria patch
+  set when it was rebased from quic-go 0.63 to 0.65; not an upstream quic-go bug). With `DisablePathManager`
+  (Xray sets it on both sides) 0.63.1 called `sendConn.ChangeRemoteAddr` only on a server and only for a
+  packet from a new address. In 2895f039 the call moved in front of that check and runs for every received
+  1-RTT packet, on clients too: two allocations per received packet, the send path loses the spare room for
+  the UDP_SEGMENT control message (one more allocation per send), a server builds path-validation state it
+  never uses, and a client starts sending from whatever local address the last packet arrived on.
+  `connection.go` again changes the address only for a server and only when it differs. Test:
+  `TestConnectionDisablePathManagerRemoteAddr` (`connection_spofy_test.go`).
