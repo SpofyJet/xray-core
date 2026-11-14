@@ -39,7 +39,7 @@
 
 ```bash
 spofy/build.sh                       # -> spofy/dist/xray-linux-amd64 (флаги как в релизном workflow upstream)
-spofy/docker/build-image.sh          # -> spofy/remnanode:3.4.5-x<ver>-spofy-<sha>
+spofy/docker/build-image.sh          # -> spofy/remnanode:3.4.6-x<ver>-spofy-<sha>
 spofy/test/run-e2e.sh <dir> reality SERVERS="xray-spofy"            # fingerprints edge/ios/qq/chrome/...
 spofy/test/run-e2e.sh <dir> hysteria BINS="stock spofy" SCEN="none|delay 25ms loss 1%"
 spofy/deploy/node.sh <ssh-host> plan           # только чтение
