@@ -39,3 +39,12 @@ Two test fixtures are not in git because of the repository `.gitignore` (`*.key`
   `connection.go` again changes the address only for a server and only when it differs. Test:
   `TestConnectionDisablePathManagerRemoteAddr` (`connection_spofy_test.go`). Allocations in a download over
   localhost sockets, both sides in one process: 5754 -> 4844 per 1 MB, 10205 -> 9004 per 100 requests of 2 KB.
+
+- **Stall when the send queue frees up before the run loop checks it** (port of quic-go/quic-go 5a6c94ec,
+  PR #6223, issue #6189; the code is the same in apernet 2895f039). When a send loop returned because the
+  send queue (8 entries) was full and the queue freed a slot before the run loop looked at it again, the run
+  loop neither waited for the queue nor scheduled more sending: already queued data, DATAGRAM frames in
+  particular, stayed unsent until the next received packet or timer, i.e. one RTT or up to the PTO later.
+  Small DATAGRAM packets (Hysteria UDP: calls, games, DNS) fill the queue quickly, because each one is its own
+  queue entry. The send loops now set `pacingDeadline = deadlineSendImmediately` when they stop on a full
+  queue. Test: `TestConnectionSendQueueFreedBeforeCheck` (fails without the fix).
