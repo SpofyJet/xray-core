@@ -24,6 +24,8 @@
 | cnc: no payload copy on Connection.Write (0f2c5234) | gRPC с включённой статистикой инбаунда писал каждый буфер через `buf.MergeBytes` (лишняя копия) | −6 % CPU ядра на Trojan-gRPC (стенд 13.11: 0,530 → 0,497 мс CPU/МБ) |
 | signal: ActivityTimer.SetTimeout (98682130) | первый синхронный запуск проверки только снимает метку (порт upstream PR #7270, закрыт без слияния) | SetTimeout мог заблокировать сам себя: обработчик соединения зависал навсегда (воспроизводится тестом) |
 | tls: hot reload после ошибки чтения (78e9aafe) | при ошибке чтения файла сертификата или ключа — повтор на следующем тике (то же, что upstream PR #7376, закрыт без слияния) | после одной ошибки чтения перечитывание выключалось до перезапуска: продлённый сертификат не подхватывался (ноды с `certificateFile`: Hysteria) |
+| Hysteria UDP: меньше работы на пакет (990b066d) | как в Hysteria 2.14 (HyNetworks/hysteria c2b181e0), под код Xray: сообщение разбирается вручную, строка адреса и `Destination` прошлого пакета берутся повторно, датаграмма без копии (`InterConn.ReadPacket`; `CounterConnection` продолжает считать байты), адрес отправки не форматируется заново, `errTooLarge` не уходит в кучу на каждом пакете | бенчмарк на пакет: приём от клиента 690 → 110 нс, 15 → 4 выделения, 1804 → 104 Б; отправка клиенту 160 → 93 нс. e2e `hysteria-udp` (медиана 3 раундов, процессор сервера на пакет туда-обратно): 64 Б 18,1 → 15,9 мкс, 1200 Б 27,4 → 23,5 мкс; счётчики трафика (inbound и user) те же байт в байт |
+| quic-go: отправка не застревает на полной очереди (1de8a917) | порт quic-go 5a6c94ec (PR #6223, issue #6189) | пачка мелких UDP-датаграмм (звонки, игры, DNS) могла ждать следующего входящего пакета: +1 RTT или до PTO |
 
 ### REALITY `requireMlkem`
 
@@ -69,6 +71,24 @@ go test ./... ; spofy/test/run-e2e.sh ...   # затем образ, одна н
 
 Проверить после merge: исправил ли upstream что-то из перенесённого (тогда наш коммит можно откатить),
 и не вернулся ли неявный `minClientVer` (ловит `TestSpofyREALITYServerDefaults`).
+
+## Синк с Hysteria (HyNetworks/hysteria, бывш. apernet)
+
+Своей копии Hysteria в форке нет: в Xray своя реализация протокола (`proxy/hysteria`, `transport/internet/hysteria`),
+общая с Hysteria только quic-go. На каждый выпуск `app/vX.Y.Z`:
+
+1. `go.mod` выпуска: версия `github.com/apernet/quic-go` (репозиторий теперь HyNetworks/quic-go, ветка
+   `v0.65.0-mod-rename`). Новее нашей `third_party/quic-go` — обновлять по `third_party/quic-go/SPOFY.md`.
+2. Коммиты в `core/server`, `core/internal/protocol`: то же место у нас — `proxy/hysteria/{protocol,client,server}.go`
+   и `transport/internet/hysteria/{hub,conn}.go`. ACL, `app/`, `extras/` (кроме исходящих) к нодам не относятся.
+3. Заодно — исправления upstream quic-go после версии, на которой стоит Hysteria (`compare/vX...master`).
+4. Замер UDP: `spofy/test/run-e2e.sh <dir> hysteria-udp SRVS="prod new" CLI=new` (пачки мелких датаграмм с netem
+   и фиксированные скорости: процессор сервера на пакет).
+
+Разобрано 15.11.2026 (2.14.0): ACL на expr — не наше; quic-go в 2.14 та же 2895f039, что у нас; «UDP −30 % на пакет»
+перенесено (строка в таблице). Из quic-go после 0.65.0 взят #6223; #6185 (предел разрывов 1000) у Hysteria-копии
+уже решён деревом и пределом 20000; #6206/#6219 (ECN после смены пути) не действуют при `DisablePathManager`;
+#6197 (−3 КБ на соединение) не берём — мало.
 
 ## Отложено (разбор Jolymmiles, 2026-11-04)
 
