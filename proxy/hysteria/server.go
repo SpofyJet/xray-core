@@ -100,10 +100,7 @@ func (s *Server) Process(ctx context.Context, network net.Network, conn stat.Con
 	}
 
 	if _, ok := iConn.(*hysteria.InterConn); ok {
-		reader := &UDPReader{
-			reader: conn,
-			df:     &Defragger{},
-		}
+		reader := newUDPReader(conn)
 
 		b := buf.New()
 		b.Resize(0, buf.Size)

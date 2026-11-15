@@ -17,6 +17,7 @@ import (
 	"github.com/xtls/xray-core/common/task"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/policy"
+	"github.com/xtls/xray-core/features/stats"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet"
 	"github.com/xtls/xray-core/transport/internet/hysteria"
@@ -145,10 +146,7 @@ func (c *Client) Process(ctx context.Context, link *transport.Link, dialer inter
 		responseDone := func() error {
 			defer timer.SetTimeout(sessionPolicy.Timeouts.UplinkOnly)
 
-			reader := &UDPReader{
-				reader: conn,
-				df:     &Defragger{},
-			}
+			reader := newUDPReader(conn)
 
 			if err := buf.Copy(reader, link.Writer, buf.UpdateActivity(timer)); err != nil {
 				return errors.New("failed to transport all UDP response").Base(err)
@@ -178,6 +176,19 @@ type UDPWriter struct {
 	writer io.Writer
 	addr   string
 	buf    [buf.Size]byte
+
+	// Spofy: address string of the last packet destination, so that a flow to one destination does not
+	// format it again for every packet (freedom hands over a new Destination with every packet).
+	lastDest net.Destination
+	lastAddr string
+}
+
+func (w *UDPWriter) packetAddr(d *net.Destination) string {
+	if w.lastAddr == "" || d.Port != w.lastDest.Port || d.Network != w.lastDest.Network || d.Address != w.lastDest.Address {
+		w.lastDest = *d
+		w.lastAddr = d.NetAddr()
+	}
+	return w.lastAddr
 }
 
 func (w *UDPWriter) SendMessage(msg *UDPMessage) error {
@@ -193,7 +204,7 @@ func (w *UDPWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 	for i, b := range mb {
 		addr := w.addr
 		if b.UDP != nil {
-			addr = b.UDP.NetAddr()
+			addr = w.packetAddr(b.UDP)
 		}
 
 		msg := &UDPMessage{
@@ -205,9 +216,13 @@ func (w *UDPWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 			Data:      b.Bytes(),
 		}
 
-		err := w.SendMessage(msg)
-		var errTooLarge *quic.DatagramTooLargeError
-		if go_errors.As(err, &errTooLarge) {
+		if err := w.SendMessage(msg); err != nil {
+			// errTooLarge lives on the heap (its address goes to errors.As): only on the error path
+			var errTooLarge *quic.DatagramTooLargeError
+			if !go_errors.As(err, &errTooLarge) {
+				buf.ReleaseMulti(mb[i:])
+				return err
+			}
 			msg.PacketID = uint16(rand.Intn(0xFFFF)) + 1
 			fMsgs := FragUDPMessage(msg, int(errTooLarge.MaxDatagramPayloadSize))
 			for _, fMsg := range fMsgs {
@@ -217,9 +232,6 @@ func (w *UDPWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 					return err
 				}
 			}
-		} else if err != nil {
-			buf.ReleaseMulti(mb[i:])
-			return err
 		}
 
 		b.Release()
@@ -228,40 +240,95 @@ func (w *UDPWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 	return nil
 }
 
+// packetReader is implemented by hysteria.InterConn: ReadPacket hands over the received datagram itself, which
+// Read would copy.
+type packetReader interface {
+	ReadPacket() ([]byte, error)
+}
+
 type UDPReader struct {
 	reader   io.Reader
 	df       *Defragger
 	firstBuf *buf.Buffer
+
+	// Spofy (per-packet overhead, after Hysteria 2.14): datagrams taken without a copy, the message parsed
+	// into msg, and the destination of the last address reused while the address does not change.
+	packets  packetReader
+	counter  stats.Counter
+	msg      UDPMessage
+	lastAddr string
+	lastDest net.Destination
+}
+
+func newUDPReader(conn io.Reader) *UDPReader {
+	r := &UDPReader{reader: conn, df: &Defragger{}}
+	inner := conn
+	var counter stats.Counter
+	if c, ok := conn.(*stat.CounterConnection); ok {
+		// keep counting the inbound/outbound traffic the wrapper counts in Read
+		inner, counter = c.Connection, c.ReadCounter
+	}
+	if p, ok := inner.(packetReader); ok {
+		r.packets, r.counter = p, counter
+	}
+	return r
+}
+
+func (r *UDPReader) readPacket() ([]byte, error) {
+	if r.packets != nil {
+		p, err := r.packets.ReadPacket()
+		if err != nil {
+			return nil, err
+		}
+		if r.counter != nil {
+			r.counter.Add(int64(len(p)))
+		}
+		return p, nil
+	}
+	p := make([]byte, 1500)
+	n, err := r.reader.Read(p)
+	if err != nil {
+		return nil, err
+	}
+	return p[:n], nil
 }
 
 func (r *UDPReader) ReadFrom(p []byte) (n int, addr *net.Destination, err error) {
 	for {
-		var packet [1500]byte
-
-		n, err := r.reader.Read(packet[:])
+		packet, err := r.readPacket()
 		if err != nil {
 			return 0, nil, err
 		}
 
-		msg, err := ParseUDPMessage(packet[:n])
-		if err != nil {
+		if parseUDPMessage(packet, &r.msg, r.lastAddr) != nil {
 			continue
 		}
 
+		msg := &r.msg
+		if msg.FragCount > 1 {
+			// the defragger keeps fragments until the whole packet is there, r.msg is reused
+			frag := new(UDPMessage)
+			*frag = r.msg
+			msg = frag
+		}
 		dfMsg := r.df.Feed(msg)
 		if dfMsg == nil {
 			continue
 		}
 
-		dest, err := net.ParseDestination("udp:" + dfMsg.Addr)
-		if err != nil {
-			continue
+		if dfMsg.Addr != r.lastAddr || r.lastAddr == "" {
+			dest, err := net.ParseDestination("udp:" + dfMsg.Addr)
+			if err != nil {
+				continue
+			}
+			r.lastAddr, r.lastDest = dfMsg.Addr, dest
 		}
 
 		if len(p) < len(dfMsg.Data) {
 			continue
 		}
 
+		dest := r.lastDest
 		return copy(p, dfMsg.Data), &dest, nil
 	}
 }

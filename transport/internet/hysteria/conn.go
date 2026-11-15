@@ -128,6 +128,17 @@ func (c *InterConn) Read(p []byte) (int, error) {
 	return 0, io.EOF
 }
 
+// ReadPacket returns the next datagram itself; Read copies it. The caller owns the slice (quic-go hands over a
+// fresh copy of every DATAGRAM frame).
+func (c *InterConn) ReadPacket() ([]byte, error) {
+	b, ok := <-c.ch
+	if ok {
+		c.Update()
+		return b, nil
+	}
+	return nil, io.EOF
+}
+
 func (c *InterConn) Write(p []byte) (int, error) {
 	if c.closed {
 		return 0, io.ErrClosedPipe
