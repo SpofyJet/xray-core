@@ -132,7 +132,10 @@ func checkParseSame(t testing.TB, in []byte) {
 
 func TestSpofyParseUDPMessageMatchesOld(t *testing.T) {
 	seeds := [][]byte{
-		nil, {}, {1, 2, 3}, make([]byte, 8), make([]byte, 9),
+		nil,
+		{},
+		{1, 2, 3},
+		make([]byte, 8), make([]byte, 9),
 		serializedUDPMessage(t, "203.0.113.7:443", 1),
 		serializedUDPMessage(t, "[2001:db8::1]:53", 100),
 		serializedUDPMessage(t, "example.com:3478", 1200),
@@ -219,12 +222,19 @@ func readAll(t *testing.T, r *UDPReader) (addrs []string, payloads []string) {
 func TestSpofyUDPReader(t *testing.T) {
 	type pkt struct{ addr, data string }
 	in := []pkt{
-		{"203.0.113.7:443", "a"}, {"203.0.113.7:443", "b"}, {"[2001:db8::1]:53", "c"},
-		{"example.com:3478", "d"}, {"example.com:3478", "e"}, {"bad address", "dropped"},
-		{"203.0.113.7:443", "f"}, {"203.0.113.7:444", "g"},
+		{"203.0.113.7:443", "a"},
+		{"203.0.113.7:443", "b"},
+		{"[2001:db8::1]:53", "c"},
+		{"example.com:3478", "d"},
+		{"example.com:3478", "e"},
+		{"bad address", "dropped"},
+		{"203.0.113.7:443", "f"},
+		{"203.0.113.7:444", "g"},
 	}
-	want := []string{"udp:203.0.113.7:443", "udp:203.0.113.7:443", "udp:[2001:db8::1]:53",
-		"udp:example.com:3478", "udp:example.com:3478", "udp:203.0.113.7:443", "udp:203.0.113.7:444"}
+	want := []string{
+		"udp:203.0.113.7:443", "udp:203.0.113.7:443", "udp:[2001:db8::1]:53",
+		"udp:example.com:3478", "udp:example.com:3478", "udp:203.0.113.7:443", "udp:203.0.113.7:444",
+	}
 	wantData := []string{"a", "b", "c", "d", "e", "f", "g"}
 
 	for _, mode := range []string{"packet", "counter", "copy"} {
@@ -308,8 +318,10 @@ func TestSpofyUDPWriterAddr(t *testing.T) {
 		nil,
 		shared, shared, shared,
 	}
-	want := []string{"203.0.113.7:443", "203.0.113.7:443", "203.0.113.8:443", "[2001:db8::1]:53", "example.com:53",
-		"default.invalid:1", "203.0.113.7:443", "203.0.113.7:444", "example.org:444"}
+	want := []string{
+		"203.0.113.7:443", "203.0.113.7:443", "203.0.113.8:443", "[2001:db8::1]:53", "example.com:53",
+		"default.invalid:1", "203.0.113.7:443", "203.0.113.7:444", "example.org:444",
+	}
 	for i, d := range dests {
 		if i == 7 {
 			shared.Port = 444 // the same object changed in place

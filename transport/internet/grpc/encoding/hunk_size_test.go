@@ -29,6 +29,7 @@ func (f *fakeHunks) next() ([]byte, error) {
 	f.hunks = f.hunks[1:]
 	return h, nil
 }
+
 func (f *fakeHunks) Recv() (*Hunk, error) {
 	h, err := f.next()
 	if err != nil {

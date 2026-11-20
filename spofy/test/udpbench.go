@@ -1,3 +1,5 @@
+//go:build ignore
+
 // udpbench: UDP echo origin and load generator for the Hysteria UDP e2e (spofy/test/e2e-hysteria-udp.sh).
 //
 //	udpbench echo  <listen>

@@ -156,6 +156,9 @@ func main() {
 		}
 
 		if info.IsDir() {
+			if path == filepath.Join(pwd, "third_party") {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
