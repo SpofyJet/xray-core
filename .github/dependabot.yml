@@ -9,6 +9,8 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "daily"
+    ignore:
+      - dependency-name: "golang.org/x/crypto/x509roots/fallback"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

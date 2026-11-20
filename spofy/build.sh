@@ -5,7 +5,7 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ARCH=${1:-amd64}
-GO_IMAGE=${GO_IMAGE:-golang:1.27.3}
+GO_IMAGE=${GO_IMAGE:-golang:1.27.4}
 CACHE=${SPOFY_GO_CACHE:-/var/cache/spofy-xray-build}
 mkdir -p "$ROOT/spofy/dist" "$CACHE/gomod" "$CACHE/gocache"
 if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]; then DIRTY=-dirty; else DIRTY=; fi
