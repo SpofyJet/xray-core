@@ -111,7 +111,7 @@ func (s *ClassicNameServer) HandleResponse(ctx context.Context, packet *udp_prot
 	}
 	s.Unlock()
 	if !ok {
-		errors.LogErrorInner(ctx, err, s.Name(), " cannot find the pending request")
+		errors.LogDebug(ctx, s.Name(), " got an answer to a query that is no longer pending: ", id)
 		return
 	}
 
@@ -130,8 +130,11 @@ func (s *ClassicNameServer) HandleResponse(ctx context.Context, packet *udp_prot
 			newMsg.ID = s.newReqID()
 			newReq.msg = &newMsg
 			s.addPendingRequest(&newReq)
-			b, _ := dns.PackMessage(newReq.msg)
-			s.udpServer.Dispatch(toDnsContext(newReq.ctx, s.address.String()), *s.address, b)
+			if err := s.dispatch(&newReq); err != nil {
+				errors.LogErrorInner(ctx, err, "failed to pack dns query")
+				return
+			}
+			s.resendLater(&newReq, 2)
 			return
 		}
 	}
@@ -181,16 +184,43 @@ func (s *ClassicNameServer) sendQuery(ctx context.Context, noResponseErrCh chan<
 			ctx:        ctx,
 		}
 		s.addPendingRequest(udpReq)
-		b, err := dns.PackMessage(req.msg)
-		if err != nil {
+		if err := s.dispatch(udpReq); err != nil {
 			errors.LogErrorInner(ctx, err, "failed to pack dns query")
 			if noResponseErrCh != nil {
 				noResponseErrCh <- err
 			}
 			return
 		}
-		s.udpServer.Dispatch(toDnsContext(ctx, s.address.String()), *s.address, b)
+		s.resendLater(udpReq, 2)
 	}
+}
+
+func (s *ClassicNameServer) dispatch(req *udpDnsRequest) error {
+	b, err := dns.PackMessage(req.msg)
+	if err != nil {
+		return err
+	}
+	s.udpServer.Dispatch(toDnsContext(req.ctx, s.address.String()), *s.address, b)
+	return nil
+}
+
+func (s *ClassicNameServer) resendLater(req *udpDnsRequest, left int) {
+	if left == 0 {
+		return
+	}
+	time.AfterFunc(time.Second, func() {
+		if req.ctx.Err() != nil {
+			return
+		}
+		s.RLock()
+		pending := s.requests[req.msg.ID] == req
+		s.RUnlock()
+		if !pending || s.dispatch(req) != nil {
+			return
+		}
+		errors.LogInfo(req.ctx, s.Name(), " no answer yet, querying again for: ", req.domain)
+		s.resendLater(req, left-1)
+	})
 }
 
 // QueryIP implements Server.
