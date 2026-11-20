@@ -138,7 +138,10 @@ func NewTun(options *Config) (Tun, error) {
 	t, same := kept.tun, kept.tun != nil && proto.Equal(kept.options, options)
 	kept.tun, kept.options = nil, nil
 	kept.Unlock()
-	if same {
+	if same && t.alive() {
+		if len(options.DNS) > 0 || len(options.AutoSystemRoutingTable) > 0 {
+			_ = flushDNSCache()
+		}
 		return &keptTun{WindowsTun: t, options: proto.Clone(options).(*Config), up: true}, nil
 	}
 	if t != nil {
@@ -178,17 +181,24 @@ func newTun(options *Config) (*WindowsTun, error) {
 	return tun, nil
 }
 
-func open(name, desc string) (*wintun.Adapter, error) {
-	// generate a deterministic GUID from the adapter name
+func AdapterGUID(name string) *windows.GUID {
 	id := md5.Sum([]byte(name))
-	guid := (*windows.GUID)(unsafe.Pointer(&id[0]))
+	return &windows.GUID{
+		Data1: binary.LittleEndian.Uint32(id[0:4]),
+		Data2: binary.LittleEndian.Uint16(id[4:6]),
+		Data3: binary.LittleEndian.Uint16(id[6:8]),
+		Data4: [8]byte(id[8:16]),
+	}
+}
+
+func open(name, desc string) (*wintun.Adapter, error) {
 	// try to open existing adapter by name
 	adapter, err := wintun.OpenAdapter(name)
 	if err == nil {
 		return adapter, nil
 	}
 	// try to create adapter anew
-	adapter, err = wintun.CreateAdapter(name, desc, guid)
+	adapter, err = wintun.CreateAdapter(name, desc, AdapterGUID(name))
 	if err == nil {
 		return adapter, nil
 	}
@@ -677,6 +687,11 @@ func (t *WindowsTun) ReadPacket(b []byte) ([]byte, error) {
 		procyield(1)
 		_, _ = windows.WaitForSingleObject(t.readWait, windows.INFINITE)
 	}
+}
+
+func (t *WindowsTun) alive() bool {
+	row, err := t.luid.Interface()
+	return err == nil && row.OperStatus == winipcfg.IfOperStatusUp
 }
 
 func (t *WindowsTun) receive(b []byte) ([]byte, error) {
