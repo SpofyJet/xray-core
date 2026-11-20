@@ -50,7 +50,15 @@ func TestHotReloadSurvivesReadError(t *testing.T) {
 	}
 
 	// The file is missing for at least one tick...
-	common.Must(os.Remove(certPath))
+	for end := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		err := os.Remove(certPath)
+		if err == nil {
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatal(err)
+		}
+	}
 	time.Sleep(1500 * time.Millisecond)
 	if got := served(); got != "old.example.com" {
 		t.Fatal("the current certificate must stay in use while the file is unreadable, got: ", got)
