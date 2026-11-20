@@ -26,6 +26,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 	"golang.zx2c4.com/wintun"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
+	"google.golang.org/protobuf/proto"
 )
 
 //go:linkname procyield runtime.procyield
@@ -55,9 +56,104 @@ type WindowsTun struct {
 // WindowsTun implements Tun
 var _ Tun = (*WindowsTun)(nil)
 
-// NewTun creates a Wintun interface with the given name. Should a Wintun
-// interface with the same name exist, it tried to be reused.
+var kept struct {
+	sync.Mutex
+	on      bool
+	tun     *WindowsTun
+	options *Config
+}
+
+func Keep() (release func()) {
+	kept.Lock()
+	kept.on = true
+	kept.Unlock()
+	return func() {
+		kept.Lock()
+		t := kept.tun
+		kept.on, kept.tun, kept.options = false, nil, nil
+		kept.Unlock()
+		if t != nil {
+			_ = t.Close()
+		}
+	}
+}
+
+type keptTun struct {
+	*WindowsTun
+	options *Config
+	mu      sync.RWMutex
+	gone    bool
+	up      bool
+}
+
+func (k *keptTun) Start() error {
+	if k.up {
+		return nil
+	}
+	if err := k.WindowsTun.Start(); err != nil {
+		return err
+	}
+	k.up = true
+	return nil
+}
+
+func (k *keptTun) Close() error {
+	k.mu.Lock()
+	if k.gone {
+		k.mu.Unlock()
+		return nil
+	}
+	k.gone = true
+	k.mu.Unlock()
+	_ = windows.SetEvent(k.readWait)
+	kept.Lock()
+	if kept.on && kept.tun == nil && k.up {
+		kept.tun, kept.options = k.WindowsTun, k.options
+		kept.Unlock()
+		return nil
+	}
+	kept.Unlock()
+	return k.WindowsTun.Close()
+}
+
+func (k *keptTun) ReadPacket(b []byte) ([]byte, error) {
+	for {
+		k.mu.RLock()
+		if k.gone {
+			k.mu.RUnlock()
+			return nil, windows.ERROR_HANDLE_EOF
+		}
+		got, err := k.WindowsTun.receive(b)
+		k.mu.RUnlock()
+		if !go_errors.Is(err, windows.ERROR_NO_MORE_ITEMS) {
+			return got, err
+		}
+		procyield(1)
+		_, _ = windows.WaitForSingleObject(k.readWait, windows.INFINITE)
+	}
+}
+
 func NewTun(options *Config) (Tun, error) {
+	kept.Lock()
+	t, same := kept.tun, kept.tun != nil && proto.Equal(kept.options, options)
+	kept.tun, kept.options = nil, nil
+	kept.Unlock()
+	if same {
+		return &keptTun{WindowsTun: t, options: proto.Clone(options).(*Config), up: true}, nil
+	}
+	if t != nil {
+		_ = t.Close()
+	}
+	t, err := newTun(options)
+	if err != nil {
+		return nil, err
+	}
+	return &keptTun{WindowsTun: t, options: proto.Clone(options).(*Config)}, nil
+}
+
+// newTun creates a Wintun interface with the given name. Should a Wintun
+// interface with the same name exist, it tried to be reused.
+func newTun(options *Config) (*WindowsTun, error) {
 	// instantiate wintun adapter
 	adapter, err := open(options.Name, options.Desc)
 	if err != nil {
@@ -574,25 +670,28 @@ func (t *WindowsTun) WritePacket(header, payload []byte) error {
 // ReadPacket implements Tun: it waits until Wintun has a packet and copies it out of the ring
 func (t *WindowsTun) ReadPacket(b []byte) ([]byte, error) {
 	for {
-		t.RLock()
-		if t.closed {
-			t.RUnlock()
-			return nil, windows.ERROR_HANDLE_EOF
-		}
-		packet, err := t.session.ReceivePacket()
-		if err == nil {
-			n := copy(b, packet)
-			t.session.ReleaseReceivePacket(packet)
-			t.RUnlock()
-			return b[:n], nil
-		}
-		t.RUnlock()
+		got, err := t.receive(b)
 		if !go_errors.Is(err, windows.ERROR_NO_MORE_ITEMS) {
-			return nil, err
+			return got, err
 		}
 		procyield(1)
 		_, _ = windows.WaitForSingleObject(t.readWait, windows.INFINITE)
 	}
+}
+
+func (t *WindowsTun) receive(b []byte) ([]byte, error) {
+	t.RLock()
+	defer t.RUnlock()
+	if t.closed {
+		return nil, windows.ERROR_HANDLE_EOF
+	}
+	packet, err := t.session.ReceivePacket()
+	if err != nil {
+		return nil, err
+	}
+	n := copy(b, packet)
+	t.session.ReleaseReceivePacket(packet)
+	return b[:n], nil
 }
 
 const (
