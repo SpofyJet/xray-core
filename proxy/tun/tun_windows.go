@@ -282,31 +282,27 @@ startOver:
 	}
 	retryTimes++
 	for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
-		if family == windows.AF_INET && route4 || family == windows.AF_INET6 && route6 {
-			err = setRoutes(t.luid, family, routesData)
-			if err != nil {
-				firstErr = errors.New("unable to set routes").Base(err)
-				if ignored(family, firstErr) {
-					continue
-				}
-				if err == windows.ERROR_NOT_FOUND {
-					goto startOver
-				}
-				return firstErr
+		err = setRoutes(t.luid, family, routesData)
+		if err != nil {
+			firstErr = errors.New("unable to set routes").Base(err)
+			if ignored(family, firstErr) {
+				continue
 			}
+			if err == windows.ERROR_NOT_FOUND {
+				goto startOver
+			}
+			return firstErr
 		}
-		if family == windows.AF_INET && address4 || family == windows.AF_INET6 && address6 {
-			err = setAddresses(t.luid, family, addresses)
-			if err != nil {
-				firstErr = errors.New("unable to set ips").Base(err)
-				if ignored(family, firstErr) {
-					continue
-				}
-				if err == windows.ERROR_NOT_FOUND {
-					goto startOver
-				}
-				return firstErr
+		err = setAddresses(t.luid, family, addresses)
+		if err != nil {
+			firstErr = errors.New("unable to set ips").Base(err)
+			if ignored(family, firstErr) {
+				continue
 			}
+			if err == windows.ERROR_NOT_FOUND {
+				goto startOver
+			}
+			return firstErr
 		}
 		ipif, err := t.luid.IPInterface(family)
 		if err != nil {
@@ -471,36 +467,46 @@ startOver:
 	return nil
 }
 
-func setRoutes(luid winipcfg.LUID, family winipcfg.AddressFamily, routes []*winipcfg.RouteData) error {
-	table, err := winipcfg.GetIPForwardTable2(family)
-	if err != nil {
-		return err
-	}
-	type route struct {
-		destination netip.Prefix
-		nextHop     netip.Addr
-	}
-	wanted := make(map[route]uint32, len(routes))
+type route struct {
+	destination netip.Prefix
+	nextHop     netip.Addr
+}
+
+func routeChanges(table []winipcfg.MibIPforwardRow2, luid winipcfg.LUID, family winipcfg.AddressFamily, routes []*winipcfg.RouteData) ([]*winipcfg.MibIPforwardRow2, map[route]uint32) {
+	missing := make(map[route]uint32, len(routes))
 	for _, r := range routes {
 		if r.Destination.Addr().Is4() == (family == windows.AF_INET) {
-			wanted[route{r.Destination, r.NextHop}] = r.Metric
+			missing[route{r.Destination.Masked(), r.NextHop.WithZone("")}] = r.Metric
 		}
 	}
+	var stale []*winipcfg.MibIPforwardRow2
 	for i := range table {
 		row := &table[i]
 		if row.InterfaceLUID != luid || row.Protocol != winipcfg.RouteProtocolNetMgmt {
 			continue
 		}
-		key := route{row.DestinationPrefix.Prefix(), row.NextHop.Addr()}
-		if metric, ok := wanted[key]; ok && metric == row.Metric {
-			delete(wanted, key)
+		key := route{row.DestinationPrefix.Prefix().Masked(), row.NextHop.Addr().WithZone("")}
+		if metric, ok := missing[key]; ok && metric == row.Metric {
+			delete(missing, key)
 			continue
 		}
+		stale = append(stale, row)
+	}
+	return stale, missing
+}
+
+func setRoutes(luid winipcfg.LUID, family winipcfg.AddressFamily, routes []*winipcfg.RouteData) error {
+	table, err := winipcfg.GetIPForwardTable2(family)
+	if err != nil {
+		return err
+	}
+	stale, missing := routeChanges(table, luid, family, routes)
+	for _, row := range stale {
 		if err := row.Delete(); err != nil && !go_errors.Is(err, windows.ERROR_NOT_FOUND) {
 			return err
 		}
 	}
-	for r, metric := range wanted {
+	for r, metric := range missing {
 		if err := luid.AddRoute(r.destination, r.nextHop, metric); err != nil && !go_errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
 			return err
 		}
@@ -508,17 +514,14 @@ func setRoutes(luid winipcfg.LUID, family winipcfg.AddressFamily, routes []*wini
 	return nil
 }
 
-func setAddresses(luid winipcfg.LUID, family winipcfg.AddressFamily, addresses []netip.Prefix) error {
-	rows, err := winipcfg.GetUnicastIPAddressTable(family)
-	if err != nil {
-		return err
-	}
+func addressChanges(rows []winipcfg.MibUnicastIPAddressRow, luid winipcfg.LUID, family winipcfg.AddressFamily, addresses []netip.Prefix) ([]*winipcfg.MibUnicastIPAddressRow, []netip.Prefix) {
 	wanted := make(map[netip.Prefix]bool, len(addresses))
 	for _, a := range addresses {
 		if a.Addr().Is4() == (family == windows.AF_INET) {
 			wanted[a] = true
 		}
 	}
+	var stale []*winipcfg.MibUnicastIPAddressRow
 	for i := range rows {
 		row := &rows[i]
 		if row.InterfaceLUID != luid {
@@ -528,9 +531,27 @@ func setAddresses(luid winipcfg.LUID, family winipcfg.AddressFamily, addresses [
 			delete(wanted, prefix)
 			continue
 		}
-		_ = row.Delete()
+		stale = append(stale, row)
 	}
+	missing := make([]netip.Prefix, 0, len(wanted))
 	for a := range wanted {
+		missing = append(missing, a)
+	}
+	return stale, missing
+}
+
+func setAddresses(luid winipcfg.LUID, family winipcfg.AddressFamily, addresses []netip.Prefix) error {
+	rows, err := winipcfg.GetUnicastIPAddressTable(family)
+	if err != nil {
+		return err
+	}
+	stale, missing := addressChanges(rows, luid, family, addresses)
+	for _, row := range stale {
+		if err := row.Delete(); err != nil && !go_errors.Is(err, windows.ERROR_NOT_FOUND) {
+			errors.LogWarningInner(context.Background(), err, "[tun] an address the interface does not need is left: ", row.Address.Addr())
+		}
+	}
+	for _, a := range missing {
 		if err := luid.AddIPAddress(a); err != nil && !go_errors.Is(err, windows.ERROR_OBJECT_ALREADY_EXISTS) {
 			return err
 		}
