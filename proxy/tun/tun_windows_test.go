@@ -162,6 +162,21 @@ func lost(before, after []string) []string {
 	return gone
 }
 
+func settled(t *testing.T, family winipcfg.AddressFamily, keep func(*winipcfg.MibIPforwardRow2) bool) []string {
+	t.Helper()
+	last := routesOn(forwardTable(t, family), keep)
+	for end := time.Now().Add(3 * time.Second); time.Now().Before(end); {
+		time.Sleep(200 * time.Millisecond)
+		now := routesOn(forwardTable(t, family), keep)
+		if slices.Equal(now, last) {
+			return now
+		}
+		last = now
+	}
+	t.Fatalf("the routes Windows makes for the interface keep changing: %q", last)
+	return nil
+}
+
 func ready(t *testing.T, luid winipcfg.LUID) {
 	t.Helper()
 	for end := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
@@ -199,6 +214,10 @@ func TestTheInterfaceComesToTheWantedRoutesAndAddressesAndLeavesTheRestAlone(t *
 	}
 	others4 := routesOn(forwardTable(t, windows.AF_INET), elsewhere)
 	others6 := routesOn(forwardTable(t, windows.AF_INET6), elsewhere)
+	system := func(row *winipcfg.MibIPforwardRow2) bool {
+		return row.InterfaceLUID == luid && row.Protocol != winipcfg.RouteProtocolNetMgmt
+	}
+	forAddress := map[winipcfg.AddressFamily][]string{}
 
 	addresses := func(family winipcfg.AddressFamily, list ...string) {
 		t.Helper()
@@ -236,10 +255,6 @@ func TestTheInterfaceComesToTheWantedRoutesAndAddressesAndLeavesTheRestAlone(t *
 			want = append(want, fmt.Sprintf("%d %s via %s metric %d", luid, destination, hop, metric))
 		}
 		slices.Sort(want)
-		system := func(row *winipcfg.MibIPforwardRow2) bool {
-			return row.InterfaceLUID == luid && row.Protocol != winipcfg.RouteProtocolNetMgmt
-		}
-		before := routesOn(forwardTable(t, family), system)
 		if err := setRoutes(luid, family, wanted); err != nil {
 			t.Fatalf("routes %v: %v", list, err)
 		}
@@ -250,13 +265,15 @@ func TestTheInterfaceComesToTheWantedRoutesAndAddressesAndLeavesTheRestAlone(t *
 		stale, missing := routeChanges(table, luid, family, wanted)
 		same(t, fmt.Sprintf("routes still to remove after %v", list), routeNames(stale), []string{})
 		same(t, fmt.Sprintf("routes still to add after %v", list), missingNames(missing), []string{})
-		if gone := lost(before, routesOn(table, system)); len(gone) > 0 {
-			t.Errorf("routes %v took the system's own routes of the interface: %q", list, gone)
+		if gone := lost(forAddress[family], routesOn(table, system)); len(gone) > 0 {
+			t.Errorf("routes %v took routes Windows made for the address of the interface: %q", list, gone)
 		}
 	}
 
 	addresses(windows.AF_INET, "198.18.0.1/30")
 	addresses(windows.AF_INET6, "2001:db8:5::1/126")
+	forAddress[windows.AF_INET] = settled(t, windows.AF_INET, system)
+	forAddress[windows.AF_INET6] = settled(t, windows.AF_INET6, system)
 	routes(windows.AF_INET, map[string]uint32{"198.51.100.0/24": 0, "203.0.113.0/24": 0})
 	routes(windows.AF_INET, map[string]uint32{"203.0.113.0/24": 0, "192.0.2.0/24": 0})
 	routes(windows.AF_INET, map[string]uint32{"203.0.113.0/24": 7, "192.0.2.0/24": 0})
