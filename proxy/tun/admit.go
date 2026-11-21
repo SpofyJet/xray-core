@@ -6,7 +6,7 @@ import (
 	"github.com/xtls/xray-core/common/net"
 )
 
-type Admit func(network net.Network, source, destination net.Destination) bool
+type Admit func(network net.Network, source, destination net.Destination) (ok bool, outbound string)
 
 var admit atomic.Pointer[Admit]
 
@@ -18,7 +18,10 @@ func SetAdmit(f Admit) {
 	admit.Store(&f)
 }
 
-func admitted(source, destination net.Destination) bool {
+func admitted(source, destination net.Destination) (bool, string) {
 	f := admit.Load()
-	return f == nil || (*f)(destination.Network, source, destination)
+	if f == nil {
+		return true, ""
+	}
+	return (*f)(destination.Network, source, destination)
 }

@@ -220,7 +220,8 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	ctx = c.ContextWithID(ctx, session.NewID())
 
 	source := net.DestinationFromAddr(conn.RemoteAddr())
-	if !admitted(source, destination) {
+	ok, detour := admitted(source, destination)
+	if !ok {
 		errors.LogWarning(ctx, "refused a connection the system does not route into this tunnel")
 		return
 	}
@@ -240,6 +241,9 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 		SniffingRequest: t.sniffingRequest,
 	})
 	ctx = session.SubContextFromMuxInbound(ctx)
+	if detour != "" {
+		ctx = session.SetForcedOutboundTagToContext(ctx, detour)
+	}
 
 	ctx = log.ContextWithAccessMessage(ctx, &log.AccessMessage{
 		From:   inbound.Source,

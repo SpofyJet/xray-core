@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
 	xnet "github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport"
 )
@@ -75,6 +77,7 @@ func (c *testConn) SetWriteDeadline(time.Time) error {
 type testDispatcher struct {
 	writePayload []byte
 	readBytes    int32
+	detour       string
 }
 
 func (d *testDispatcher) Type() interface{} {
@@ -94,6 +97,7 @@ func (d *testDispatcher) Dispatch(context.Context, xnet.Destination) (*transport
 }
 
 func (d *testDispatcher) DispatchLink(ctx context.Context, dest xnet.Destination, link *transport.Link) error {
+	d.detour = session.GetForcedOutboundTagFromContext(ctx)
 	mb, err := link.Reader.ReadMultiBuffer()
 	if err != nil {
 		return err
@@ -182,15 +186,22 @@ func TestHandlerCountsTunConnectionTraffic(t *testing.T) {
 
 func TestHandlerPassesOnlyWhatIsAdmitted(t *testing.T) {
 	var asked []string
-	SetAdmit(func(network xnet.Network, source, destination xnet.Destination) bool {
+	SetAdmit(func(network xnet.Network, source, destination xnet.Destination) (bool, string) {
 		asked = append(asked, network.SystemString()+" "+source.NetAddr()+" "+destination.NetAddr())
-		return destination.Port != 443
+		switch destination.Port {
+		case 443:
+			return false, ""
+		case 53:
+			return true, "outside"
+		}
+		return true, ""
 	})
 	defer SetAdmit(nil)
 	for _, c := range []struct {
 		port    xnet.Port
 		through bool
-	}{{443, false}, {80, true}} {
+		detour  string
+	}{{443, false, ""}, {80, true, ""}, {53, true, "outside"}} {
 		dispatcher := &testDispatcher{writePayload: []byte("downlink")}
 		conn := newTestConn([]byte("uplink"))
 		handler := &Handler{ctx: context.Background(), config: &Config{}, dispatcher: dispatcher}
@@ -202,15 +213,18 @@ func TestHandlerPassesOnlyWhatIsAdmitted(t *testing.T) {
 		if !c.through && read != 0 {
 			t.Fatalf("a refused connection reached the dispatcher with %d bytes", read)
 		}
+		if dispatcher.detour != c.detour {
+			t.Fatalf("port %d went to %q, want %q", c.port, dispatcher.detour, c.detour)
+		}
 	}
-	want := []string{"tcp 10.0.0.2:12345 127.0.0.1:443", "tcp 10.0.0.2:12345 127.0.0.1:80"}
-	if len(asked) != len(want) || asked[0] != want[0] || asked[1] != want[1] {
+	want := []string{"tcp 10.0.0.2:12345 127.0.0.1:443", "tcp 10.0.0.2:12345 127.0.0.1:80", "tcp 10.0.0.2:12345 127.0.0.1:53"}
+	if strings.Join(asked, ",") != strings.Join(want, ",") {
 		t.Fatalf("asked %q, want %q", asked, want)
 	}
 	SetAdmit(nil)
 	dispatcher := &testDispatcher{writePayload: []byte("downlink")}
 	(&Handler{ctx: context.Background(), config: &Config{}, dispatcher: dispatcher}).HandleConnection(newTestConn([]byte("uplink")), xnet.UDPDestination(xnet.LocalHostIP, 443))
-	if atomic.LoadInt32(&dispatcher.readBytes) != int32(len("uplink")) {
-		t.Fatal("with nothing to ask every connection goes through")
+	if atomic.LoadInt32(&dispatcher.readBytes) != int32(len("uplink")) || dispatcher.detour != "" {
+		t.Fatal("with nothing to ask every connection goes through by the routing")
 	}
 }
