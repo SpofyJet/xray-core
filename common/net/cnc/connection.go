@@ -2,6 +2,7 @@ package cnc
 
 import (
 	"io"
+	"sync"
 	"time"
 
 	"github.com/xtls/xray-core/common"
@@ -69,6 +70,12 @@ func ConnectionOnClose(n io.Closer) ConnectionOption {
 	}
 }
 
+func ConnectionCloseOnDeadline() ConnectionOption {
+	return func(c *Connection) {
+		c.closeOnDeadline = true
+	}
+}
+
 func NewConnection(opts ...ConnectionOption) net.Conn {
 	c := &Connection{
 		done: done.New(),
@@ -97,6 +104,10 @@ type Connection struct {
 	onClose io.Closer
 	local   net.Addr
 	remote  net.Addr
+
+	closeOnDeadline bool
+	deadlineMu      sync.Mutex
+	deadline        *time.Timer
 }
 
 func (c *Connection) Read(b []byte) (int, error) {
@@ -150,6 +161,7 @@ func (c *Connection) WriteMultiBuffer(mb buf.MultiBuffer) error {
 
 // Close implements net.Conn.Close().
 func (c *Connection) Close() error {
+	c.stopDeadline()
 	common.Must(c.done.Close())
 	common.Interrupt(c.reader)
 	common.Close(c.writer)
@@ -172,12 +184,36 @@ func (c *Connection) RemoteAddr() net.Addr {
 
 // SetDeadline implements net.Conn.SetDeadline().
 func (c *Connection) SetDeadline(t time.Time) error {
-	return nil
+	return c.SetReadDeadline(t)
 }
 
 // SetReadDeadline implements net.Conn.SetReadDeadline().
 func (c *Connection) SetReadDeadline(t time.Time) error {
+	if !c.closeOnDeadline {
+		return nil
+	}
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
+	if c.deadline != nil {
+		c.deadline.Stop()
+		c.deadline = nil
+	}
+	if !t.IsZero() && !c.done.Done() {
+		c.deadline = time.AfterFunc(time.Until(t), func() { c.Close() })
+	}
 	return nil
+}
+
+func (c *Connection) stopDeadline() {
+	if !c.closeOnDeadline {
+		return
+	}
+	c.deadlineMu.Lock()
+	if c.deadline != nil {
+		c.deadline.Stop()
+		c.deadline = nil
+	}
+	c.deadlineMu.Unlock()
 }
 
 // SetWriteDeadline implements net.Conn.SetWriteDeadline().

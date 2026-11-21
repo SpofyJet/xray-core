@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/net/cnc"
@@ -120,5 +121,45 @@ func BenchmarkSpofyOldCopyPath8K(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		mb := buf.MergeBytes(make(buf.MultiBuffer, 0, 2), payload)
 		w.WriteMultiBuffer(mb)
+	}
+}
+
+func TestSpofyDeadlineIgnoredWithoutOption(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer pw.Close()
+	conn := cnc.NewConnection(cnc.ConnectionInput(io.Discard), cnc.ConnectionOutput(pr), cnc.ConnectionOnClose(pr))
+	conn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+	time.Sleep(100 * time.Millisecond)
+	if _, err := conn.Write([]byte{1}); err != nil {
+		t.Fatalf("connection without the option was closed by its deadline: %v", err)
+	}
+}
+
+func TestSpofyDeadlineClosesAndClears(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer pw.Close()
+	conn := cnc.NewConnection(cnc.ConnectionInput(io.Discard), cnc.ConnectionOutput(pr), cnc.ConnectionOnClose(pr), cnc.ConnectionCloseOnDeadline())
+	conn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+	conn.SetReadDeadline(time.Time{})
+	time.Sleep(100 * time.Millisecond)
+	if _, err := conn.Write([]byte{1}); err != nil {
+		t.Fatalf("cleared deadline still closed the connection: %v", err)
+	}
+	conn.SetDeadline(time.Now().Add(20 * time.Millisecond))
+	done := make(chan error, 1)
+	go func() {
+		_, err := conn.Read(make([]byte, 1))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("read returned data on a closed connection")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked read not released by the deadline")
+	}
+	if _, err := conn.Write([]byte{1}); err == nil {
+		t.Fatal("write succeeded after the deadline closed the connection")
 	}
 }

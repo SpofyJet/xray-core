@@ -36,17 +36,17 @@ func NewHunkReadWriter(hc HunkConn, cancel context.CancelFunc) *HunkReaderWriter
 	return &HunkReaderWriter{hc, cancel, done.New(), nil, 0}
 }
 
-func NewHunkConn(hc HunkConn, cancel context.CancelFunc, trustedXForwardedFor []string) net.Conn {
+func NewHunkConn(hc HunkConn, cancel context.CancelFunc, trustedXForwardedFor []string, opts ...cnc.ConnectionOption) net.Conn {
 	rAddr := remoteAddrFromContext(hc.Context(), trustedXForwardedFor)
 	lAddr := localAddrFromContext(hc.Context())
 	wrc := NewHunkReadWriter(hc, cancel)
-	return cnc.NewConnection(
+	return cnc.NewConnection(append([]cnc.ConnectionOption{
 		cnc.ConnectionInput(wrc),
 		cnc.ConnectionOutput(wrc),
 		cnc.ConnectionOnClose(wrc),
 		cnc.ConnectionRemoteAddr(rAddr),
 		cnc.ConnectionLocalAddr(lAddr),
-	)
+	}, opts...)...)
 }
 
 func (h *HunkReaderWriter) forceFetch() error {

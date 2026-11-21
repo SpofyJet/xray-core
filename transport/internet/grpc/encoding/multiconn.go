@@ -31,17 +31,17 @@ func NewMultiHunkReadWriter(hc MultiHunkConn, cancel context.CancelFunc) *MultiH
 	return &MultiHunkReaderWriter{hc, cancel, done.New(), nil}
 }
 
-func NewMultiHunkConn(hc MultiHunkConn, cancel context.CancelFunc, trustedXForwardedFor []string) net.Conn {
+func NewMultiHunkConn(hc MultiHunkConn, cancel context.CancelFunc, trustedXForwardedFor []string, opts ...cnc.ConnectionOption) net.Conn {
 	rAddr := remoteAddrFromContext(hc.Context(), trustedXForwardedFor)
 	lAddr := localAddrFromContext(hc.Context())
 	wrc := NewMultiHunkReadWriter(hc, cancel)
-	return cnc.NewConnection(
+	return cnc.NewConnection(append([]cnc.ConnectionOption{
 		cnc.ConnectionInputMulti(wrc),
 		cnc.ConnectionOutputMulti(wrc),
 		cnc.ConnectionOnClose(wrc),
 		cnc.ConnectionRemoteAddr(rAddr),
 		cnc.ConnectionLocalAddr(lAddr),
-	)
+	}, opts...)...)
 }
 
 func (h *MultiHunkReaderWriter) forceFetch() error {
