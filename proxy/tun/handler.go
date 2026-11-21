@@ -220,6 +220,10 @@ func (t *Handler) HandleConnection(conn net.Conn, destination net.Destination) {
 	ctx = c.ContextWithID(ctx, session.NewID())
 
 	source := net.DestinationFromAddr(conn.RemoteAddr())
+	if !admitted(source, destination) {
+		errors.LogWarning(ctx, "refused a connection the system does not route into this tunnel")
+		return
+	}
 
 	inbound := session.Inbound{
 		Name:          "tun",

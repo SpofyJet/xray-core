@@ -179,3 +179,38 @@ func TestHandlerCountsTunConnectionTraffic(t *testing.T) {
 		t.Fatalf("connection write mismatch: got %q, want %q", got, "downlink")
 	}
 }
+
+func TestHandlerPassesOnlyWhatIsAdmitted(t *testing.T) {
+	var asked []string
+	SetAdmit(func(network xnet.Network, source, destination xnet.Destination) bool {
+		asked = append(asked, network.SystemString()+" "+source.NetAddr()+" "+destination.NetAddr())
+		return destination.Port != 443
+	})
+	defer SetAdmit(nil)
+	for _, c := range []struct {
+		port    xnet.Port
+		through bool
+	}{{443, false}, {80, true}} {
+		dispatcher := &testDispatcher{writePayload: []byte("downlink")}
+		conn := newTestConn([]byte("uplink"))
+		handler := &Handler{ctx: context.Background(), config: &Config{}, dispatcher: dispatcher}
+		handler.HandleConnection(conn, xnet.TCPDestination(xnet.LocalHostIP, c.port))
+		read := atomic.LoadInt32(&dispatcher.readBytes)
+		if through := read == int32(len("uplink")) && conn.writer.String() == "downlink"; through != c.through {
+			t.Fatalf("port %d: through=%v read=%d wrote=%q, want through=%v", c.port, through, read, conn.writer.String(), c.through)
+		}
+		if !c.through && read != 0 {
+			t.Fatalf("a refused connection reached the dispatcher with %d bytes", read)
+		}
+	}
+	want := []string{"tcp 10.0.0.2:12345 127.0.0.1:443", "tcp 10.0.0.2:12345 127.0.0.1:80"}
+	if len(asked) != len(want) || asked[0] != want[0] || asked[1] != want[1] {
+		t.Fatalf("asked %q, want %q", asked, want)
+	}
+	SetAdmit(nil)
+	dispatcher := &testDispatcher{writePayload: []byte("downlink")}
+	(&Handler{ctx: context.Background(), config: &Config{}, dispatcher: dispatcher}).HandleConnection(newTestConn([]byte("uplink")), xnet.UDPDestination(xnet.LocalHostIP, 443))
+	if atomic.LoadInt32(&dispatcher.readBytes) != int32(len("uplink")) {
+		t.Fatal("with nothing to ask every connection goes through")
+	}
+}
